@@ -1,0 +1,20 @@
+plugins {
+    kotlin("multiplatform")
+}
+
+kotlin {
+    jvm()
+    iosArm64()
+    js {
+        browser()
+    }
+}
+
+tasks.register("printSourceSets") {
+    group = "practice"
+    doLast {
+        kotlin.sourceSets.names.sorted().forEach {
+            println(it)
+        }
+    }
+}
