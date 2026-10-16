@@ -276,3 +276,317 @@ class GreetingTest {
 For `kotlin.test` to work, I added `implementation(kotlin("test"))` to `commonTest.dependencies` in `build.gradle.kts`.
 
 I ran the test with the green arrow next to `GreetingTest`, and it passed. `Greeting` is in `commonMain` and `GreetingTest` is in the paired `commonTest`, so this follows the Main/Test pairing from the lecture. Because `commonTest` compiles to every declared target, the same test can run on every platform.
+
+# Section 3 - KMP Advanced Project Structure 
+
+## Question 14
+`Context`: A developer claims that `dependsOn` is "basically the same thing" as putting a module in the `dependencies {}` block, just for source sets instead of libraries.
+
+`Task`: Explain why this is wrong. List all four consequences the lecture says hold simultaneously when `A.dependsOn(B)` is declared, and state clearly which kind of relation (visibility/actualization, or packaging/build) `dependsOn` represents.
+
+`answer`:
+
+The dependencies {} block is a normal Gradle dependency. It brings in published libraries by coordinates ("group:artifact:version") or other projects by path, with scopes like implementation/api. This is a packaging/build relation.
+dependsOn is declared outside dependencies {} on purpose. It can’t be used for a library or for another Gradle project’s source set. It only links source sets inside the same project into a hierarchy.
+dependsOn relations are also preserved at compile time: the compiler checks them directly. They are not just a way of organizing the project.
+When A.dependsOn(B) is declared, all four of these hold at the same time:
+
+- A observes B’s API, including internal declarations.
+- A can provide actual implementations for B’s expect declarations. 
+- B compiles to every target A compiles to, plus its own targets. 
+- A inherits all of B’s regular dependencies.
+
+Example: iosArm64Main.dependsOn(iosMain) means iosArm64Main depends on iosMain for its common declarations.
+
+## Question 15
+`Context`: A student tries to write `commonTest.dependsOn(commonMain)` to "share" test code with production code, and separately tries to call `dependsOn` directly on a library's own commonMain.
+
+`Task`: Explain why both of these attempts are mistakes, referencing the lecture's explanation of what `dependsOn` is reserved for, and what the `dependencies {}` block is for instead.
+
+`answer`:
+1. commonTest.dependsOn(commonMain)
+
+Main and test code are kept separate on purpose. Every target automatically gets two compilations, main and test. This is the same Main/Test split that the source sets have.
+The two also live in different hierarchies. *Test source sets “align on their own separate tree”*. For example, upgrading a library in iosTest never affects production code.
+commonTest doesn’t need this link to see production code. The plugin already sets up the main/test relationship, so test code can see commonMain.
+A manual dependsOn would mix the test and production hierarchies. It would also pass all four dependsOn consequences to test code, including inheriting dependencies and providing actuals for production expects. That breaks the separation the build relies on.
+To reuse test helpers, put them in commonTest itself. Don’t try to “share” test code with production through dependsOn.
+
+2. calling dependsOn on a library’s own commonMain
+
+DependsOn “is declared outside dependencies {} on purpose - it can’t be used for a library or another Gradle project’s source set.” It only links source sets inside your own project.
+A published library already ships its own source-set structure. For example, kotlinx-coroutines has its own commonMain, concurrentMain and jsMain. You don’t wire into that tree yourself.
+
+## Question 16
+`Context`: The lecture's flagship example: a project targets JVM, JS, and Linux (linuxX64), and the team wants to share code between just JVM and JS — a pairing Kotlin has no built-in source set for.
+
+`Task`: In Android Studio, create (or reuse) a KMP module declaring `jvm()`, `js(IR) { browser() }`, and `linuxX64()` as targets. In the `sourceSets {}` block, declare `val jvmAndJsMain by creating { }`, then wire it in with the three `dependsOn` calls from the lecture: `jvmAndJsMain.dependsOn(commonMain.get())`, `jvmMain.dependsOn(jvmAndJsMain)`, and `jsMain.dependsOn(jvmAndJsMain)`. Move one shared function into `jvmAndJsMain` and confirm the project still syncs and builds.
+
+`answer`:
+
+I created a new KMP module `hierarchy` and added it to `settings.gradle.kts` with `include(":hierarchy")`. The module declares three targets: `jvm()`, `js(IR) { browser() }` and `linuxX64()`.
+
+Kotlin has no built-in source set for only JVM + JS, so I created one by hand and connected it with the three `dependsOn` calls from the lecture.
+
+``hierarchy/build.gradle.kts``:
+```kt
+kotlin {
+    jvm()
+    js(IR) {
+        browser()
+    }
+    linuxX64()
+
+    sourceSets {
+        val jvmAndJsMain by creating { }
+
+        val jvmMain by getting
+        val jsMain by getting
+
+        jvmAndJsMain.dependsOn(commonMain.get())
+        jvmMain.dependsOn(jvmAndJsMain)
+        jsMain.dependsOn(jvmAndJsMain)
+    }
+}
+```
+
+Right after `by creating`, `jvmAndJsMain` is isolated: it has no `dependsOn` and no targets. The first call links it to `commonMain`. The other two calls make the existing `jvmMain` and `jsMain` depend on it, and that is what adds the JVM and JS targets to `jvmAndJsMain`. `linuxX64Main` is not connected to it, so it only sees `commonMain`.
+
+``commonMain/Common.kt``:
+```kt
+package com.example
+
+fun commonHello(): String = "Hello from commonMain"
+
+internal fun commonSecret(): String = "internal from commonMain"
+```
+
+``jvmAndJsMain/JvmAndJs.kt``:
+```kt
+package com.example
+
+fun sharedJvmAndJsGreeting(): String =
+    "${commonHello()} + jvmAndJsMain (running on ${runtimeName()}, ${commonSecret()})"
+
+expect fun runtimeName(): String
+```
+
+``jvmMain/Platform.jvm.kt``:
+```kt
+package com.example
+
+actual fun runtimeName(): String = "JVM ${System.getProperty("java.version")}"
+
+fun jvmGreeting(): String = "JVM says: ${sharedJvmAndJsGreeting()}"
+```
+
+``jsMain/Platform.js.kt``:
+```kt
+package com.example
+
+actual fun runtimeName(): String = "JavaScript"
+
+fun jsGreeting(): String = "JS says: ${sharedJvmAndJsGreeting()}"
+```
+
+``linuxX64Main/Platform.linux.kt``:
+```kt
+package com.example
+
+fun linuxGreeting(): String = "Linux says: ${commonHello()}"
+```
+
+The shared function `sharedJvmAndJsGreeting()` lives in `jvmAndJsMain`. The code shows the `dependsOn` consequences in practice:
+- `jvmAndJsMain` uses `commonHello()` and the `internal` function `commonSecret()` from `commonMain`, so it sees B's API including `internal`.
+- `jvmAndJsMain` declares `expect fun runtimeName()`, and `jvmMain` and `jsMain` provide the `actual` implementations.
+- `jvmMain` and `jsMain` both call the shared function. `linuxX64Main` can only use `commonMain` code, because `jvmAndJsMain` is not compiled for Linux.
+
+The project syncs and `./gradlew :hierarchy:build` builds successfully. `./gradlew :hierarchy:jvmTest` passes, so the shared function from `jvmAndJsMain` works on the JVM. `./gradlew :hierarchy:printSourceSets` shows `jvmAndJsMain -> dependsOn: [commonMain]`, and `jvmMain` and `jsMain` list `jvmAndJsMain` as their parent.
+
+## Question 17
+`Context`: The lecture warns that writing any manual `dependsOn` call opts a project out of Kotlin's default hierarchy template, which otherwise creates useful intermediate source sets (like `appleMain`) for you automatically.
+
+`Task`: Using the project you built in the previous question, add `iosArm64()` and `iosSimulatorArm64()` as two more targets. Before adding any manual `dependsOn` calls involving them, check the Project view for an auto-created `appleMain` (or `iosMain`) intermediate source set. Note whether it still appears after your earlier manual `dependsOn` wiring, and explain what you observe in terms of the default hierarchy template caveat from the lecture.
+
+`answer`:
+
+``hierarchy/build.gradle.kts``:
+```kt
+kotlin {
+    jvm()
+    js(IR) {
+        browser()
+    }
+    linuxX64()
+    iosArm64()
+    iosSimulatorArm64()
+
+    sourceSets {
+        val jvmAndJsMain by creating { }
+
+        val jvmMain by getting
+        val jsMain by getting
+
+        jvmAndJsMain.dependsOn(commonMain.get())
+        jvmMain.dependsOn(jvmAndJsMain)
+        jsMain.dependsOn(jvmAndJsMain)
+    }
+}
+```
+
+After re-sync, Gradle created the leaf source sets `iosArm64Main` and `iosSimulatorArm64Main` (plus their `Test` pairs). But there is **no** `appleMain`, `iosMain` or `nativeMain`. `./gradlew :hierarchy:printSourceSets` shows that `iosArm64Main` and `iosSimulatorArm64Main` both depend directly on `commonMain`. Gradle also prints a warning that the Default Kotlin Hierarchy Template was not applied, because explicit `.dependsOn()` edges were configured.
+
+This is exactly the caveat from the lecture. Normally the default hierarchy template builds the intermediate source sets for me (`nativeMain` -> `appleMain` -> `iosMain` -> `iosArm64Main` / `iosSimulatorArm64Main`). But my manual `dependsOn` calls from Question 16 opt the whole project out of that template. Kotlin does not mix my hand-written tree with the default one, so it does not infer the tree anymore. As the recap says: "New source sets need manual dependsOn; Kotlin won't infer the tree for you." If I want an `iosMain` shared by both iOS targets now, I have to create it with `by creating` and wire it with `dependsOn` myself, the same way as `jvmAndJsMain`.
+
+## Question 18
+`Context`: You declare `implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")` once, inside `commonMain.dependencies {}`, in a project targeting android, iosArm64, and iosSimulatorArm64.
+
+`Task`: Explain what "propagation" means here — do you also need to add this dependency separately to androidMain and iosMain? Then explain how a developer would scope the same dependency to iOS only, according to the lecture.
+
+`answer`:
+
+Propagation means that a dependency declared once on `commonMain` automatically reaches every source set that depends on `commonMain`, directly or transitively. This follows from the fourth `dependsOn` rule: A inherits all of B's regular dependencies.
+
+So **no**, I don't need to add `kotlinx-coroutines-core` to `androidMain` or `iosMain` again. `androidMain`, `iosMain`, `iosArm64Main` and `iosSimulatorArm64Main` all sit below `commonMain` in the tree, so they all get coroutines 1.7.3 from that one declaration.
+
+To scope the dependency to iOS only, I declare it on `iosMain` instead of `commonMain`:
+
+```kt
+sourceSets {
+    iosMain.dependencies {
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    }
+}
+```
+
+Now it propagates only to `iosArm64Main` and `iosSimulatorArm64Main`, and `commonMain` and `androidMain` don't see it. As the lecture says, the source set you pick is itself a scoping decision.
+
+## Question 19
+`Context`: The lecture shows a real IntelliJ screenshot where, inside a commonMain that compiles to android, iosArm64, and iosSimulatorArm64, `Dispatchers.Main` and `runBlocking` resolve fine, but `dispatcher.asExecutor()` is underlined red as unresolved.
+
+`Task`: Explain the compatibility rule that decides this outcome, referencing the fact that a published KMP library (like kotlinx-coroutines-core) ships its own internal source sets (commonMain, concurrentMain, a JVM-only source set). State specifically which of the library's own source sets each of the three calls resolves from, and why exactly one of the three fails to compile.
+
+`answer`:
+
+A published KMP library is not one blob. It ships its own source-set structure. `kotlinx-coroutines-core:1.7.3` has its own `commonMain` (every target), `concurrentMain` (every target except JS), `jsMain` and a JVM-only source set. So my `commonMain -> library` dependency is only an intermediate step. Kotlin resolves it down to real source set -> source set edges.
+
+The compatibility rule: **a library source set is visible to my source set only if it covers at least all of my source set's targets.**
+
+My `commonMain` compiles to android + iosArm64 + iosSimulatorArm64:
+- `Dispatchers.Main` comes from the library's `commonMain`. It covers every target, so it covers mine. It resolves.
+- `runBlocking` comes from the library's `concurrentMain`. It covers every target except JS. I have no JS target, so it still covers all of mine. It resolves.
+- `asExecutor()` comes from the library's JVM-only source set. It covers only JVM/Android, but not iosArm64 and iosSimulatorArm64. My `commonMain` must also compile for iOS, so this source set is not compatible and `asExecutor()` is red, unresolved.
+
+To use `asExecutor()`, the call has to move to `androidMain` (or `jvmMain`), where the JVM-only source set does cover all targets.
+
+## Question 20
+`Context`: Your commonMain declares `kotlinx-coroutines-core:1.7.3`, but androidMain separately adds `androidx.navigation-compose:2.7.7`, which internally requires coroutines 1.8.0 or newer.
+
+`Task`: Explain what Gradle does to resolve this version conflict, including what happens to commonMain's and iosMain's effective coroutines version as a result. Then explain why upgrading a dependency inside `iosTest` does NOT similarly affect the versions used in any `*Main` source set.
+
+`answer`:
+
+`commonMain` is compiled several times, once for every target. All those compilations must agree on **one** version of coroutines, otherwise the shared code could be compiled against different APIs on different platforms.
+
+`navigation-compose:2.7.7` in `androidMain` needs coroutines 1.8.0+, so Gradle resolves the conflict by picking the higher version. It raises coroutines from 1.7.3 to **1.8.0** and aligns the whole `*Main` tree on it. So the effective version becomes 1.8.0 in `androidMain`, in `commonMain`, and also in `iosMain`, even though the iOS side never asked for 1.8.0. The version I wrote (1.7.3) is not the version that is actually used.
+
+`*Test` source sets are aligned on their **own separate tree**. Version alignment happens inside the `*Main` tree and inside the `*Test` tree independently. So if I upgrade a dependency in `iosTest`, only the test source sets (and test compilations) get the new version. It never goes "up" into `iosMain`, `commonMain` or any other `*Main` source set, so test-only upgrades never touch production code.
+
+## Question 21
+`Context`: The lecture closes with the vocabulary shift from "source set" to "compilation," and shows the Gradle access pattern `kotlin { jvm { compilations.getByName("main") } }` for reaching a specific compilation.
+
+`Task`: In your Android Studio project's build.gradle.kts, inside the `kotlin {}` block for your `jvm()` target, use `compilations.getByName("main")` to access the main compilation and print its name (e.g. via `println(this.compilations.getByName("main").name)` in a small Gradle task, or by inspecting it with the Gradle build in verbose/debug mode). Confirm you can also see a `test` compilation registered for the same target, and explain in one sentence how a compilation differs from a source set.
+
+`answer`:
+
+``hierarchy/build.gradle.kts``:
+```kt
+kotlin {
+    jvm {
+        val jvmCompilations = compilations
+        tasks.register("printJvmCompilations") {
+            group = "practice"
+            doLast {
+                println("main compilation: ${jvmCompilations.getByName("main").name}")
+                jvmCompilations.forEach { compilation ->
+                    val sourceSets = compilation.allKotlinSourceSets.map { it.name }.sorted()
+                    println("${compilation.name} -> $sourceSets")
+                }
+            }
+        }
+    }
+}
+```
+
+I ran `./gradlew :hierarchy:printJvmCompilations`. `compilations.getByName("main")` returned the main compilation and printed `main compilation: main`. The loop also shows a second compilation, `test`, registered for the same `jvm` target. This matches the lecture: every target automatically gets two compilations, `main` (production sources) and `test` (test sources). The `main` compilation contains `commonMain`, `jvmAndJsMain` and `jvmMain`, and the `test` compilation contains the test source sets (`commonTest`, `jvmTest`).
+
+A source set is a group of source files with its own targets and dependencies, while a compilation is one actual compiler launch for one target that collects several source sets and compiles them together.
+
+# Section 4 - Choosing a KMP Project Configuration 
+
+## Question 22
+`Context`: A small team is starting their first Kotlin Multiplatform project and isn't sure whether to create one shared module or split into several feature modules right away.
+
+`Task`: State the lecture's pros and cons of a single shared module versus several shared modules, and explain, using the growing-app trade-off from the slides, at what point a team typically moves from one configuration to the other.
+
+`answer`:
+
+Single shared module:
+- Pros: a simple design with just one module reduces cognitive load, no need to decide where functionality goes. Works great as a starting point.
+- Cons: compilation time increases as the shared module grows. No separate features, and no way to depend on only part of the shared code.
+
+Several shared modules (feature modules + umbrella module):
+- Pros: separation of concerns for shared code. Better scalability as the app grows.
+- Cons: more complicated setup, including umbrella framework configuration. More involved dependency management across modules.
+
+For a small team starting their first KMP project, the lecture recommends starting with **one shared module**. The team moves to several modules when the app grows: when the shared module gets so big that compilation time becomes a problem, when features need to be separated, or when some code needs to depend on only part of the shared code. At that point they split the shared module into feature modules and add an umbrella module for iOS.
+
+## Question 23
+`Context`: A team has split their shared code into three feature modules and is now trying to generate iOS frameworks directly from each feature module separately, one framework per module.
+
+`Task`: Explain, using the lecture's dependency-duplication reasoning, exactly why this approach breaks down on iOS, what an umbrella module is, and how it fixes the problem. Include the concrete failure mode the lecture describes (state not being shared through "the same" dependency).
+
+`answer`:
+
+Each KMP module compiled to its own framework bundles **all of its dependencies inside it**. Kotlin can't share a common dependency across separate builds, because each binary is trimmed to exactly what that one build needs. So if two feature modules both use the same dependency (for example, a shared `core` module or a library) and are exposed as two separate frameworks, that dependency is compiled into the iOS app **twice**, as two incompatible copies.
+
+The concrete failure: state passed through "the same" dependency from two different modules is not actually connected. For example, if feature 1 saves a value into a shared singleton and feature 2 reads it, on iOS they talk to two different copies of that singleton, so feature 2 never sees the value. This leads to bugs that only show up on iOS, because on Android all modules use one copy.
+
+An umbrella module is a module that depends on all the feature modules and is compiled into **one** iOS framework. The Android app can still depend on any or all feature modules directly, but the iOS app depends only on the umbrella framework. Because everything is compiled in one build, every dependency exists exactly once, with one consistent code structure, and the duplicate-state problem disappears. One framework is the only way to guarantee one copy.
+
+## Question 24
+`Context`: Your organization is deciding between a monorepo, a two-repository split (Android+shared | iOS), and a three-repository split (Android | iOS | shared).
+
+`Task`: For each of the three repository layouts, state one advantage and one disadvantage from the lecture, and explain the specific versioning consequence that changes between the two-repository and three-repository setups (in particular, what has to happen to the shared modules in the three-repository case that doesn't in the two-repository case).
+
+`answer`:
+
+Monorepo (everything in one repository):
+- Advantage: easy to set up with project wizards, and iOS developers can work with the shared code without hunting across repositories.
+- Disadvantage: iOS developers need to set up unfamiliar tools (Gradle, Android Studio/IntelliJ), and it often doesn't fit apps whose code already lives in separate repositories.
+
+Two repositories (Android + shared | iOS):
+- Advantage: the Xcode project stays separate, so Android and iOS can be versioned separately.
+- Disadvantage: the shared module's version is tied to the Android app (they move in lockstep), so the shared code feels "owned" by the Android team.
+
+Three repositories (Android | iOS | shared):
+- Advantage: each platform owns its repository, shared code is versioned independently, and both teams use the same versioned artifact, so there is version parity.
+- Disadvantage: more publishing overhead. The shared modules must be published and versioned for every platform.
+
+Versioning consequence: in the two-repository setup, the Android app uses the shared module directly from source in the same repository, so only the iOS framework needs to be published. In the three-repository setup, the shared code lives in its own repository, so the shared modules **must be published for Android/JVM too, not just for iOS**, either each feature module separately or just the umbrella module. Android then consumes the shared code as a versioned dependency, the same way iOS does.
+
+## Question 25
+`Context`: A 200-engineer company ships five different apps that all want to reuse the same logging, networking, and analytics logic, but no single app should be forced to pull in libraries it doesn't use.
+
+`Task`: Using the "many repositories" configuration and the local-vs-remote distribution slides, design a configuration for this company: how many repositories for the shared libraries, how each app should consume only the libraries it needs, and whether local, remote, or the hybrid workflow best fits an organization this size. Justify each choice using the trade-offs given in the lecture.
+
+`answer`:
+
+Repositories for shared libraries: **three**, one each for logging, networking and analytics. This is the "many repositories" configuration: each library has its own repository and its own version, and is published independently for Android/JVM as well as iOS. Teams can update one library without releasing the others.
+
+How each app consumes only what it needs: every app gets its **own umbrella repository** that pulls in only the libraries that app uses. For example, App A's umbrella includes logging + networking, and App B's umbrella includes all three. The Android part of each app can depend on the published libraries directly, and the iOS part depends on its app's umbrella framework. The umbrella is still required for iOS, so that each shared dependency exists only once in the app and state is not duplicated. Five apps means five umbrella repositories (plus the Android and iOS app code of each app).
+
+Distribution: the **hybrid workflow**, with remote distribution as the default.
+- Pure local distribution doesn't fit 200 engineers: everyone needs a full dev environment, iOS developers have to learn Gradle and Android Studio, and it gets harder to manage as more code is shared and the team grows.
+- Remote distribution fits the size: libraries are published as versioned artifacts, and iOS developers who don't work on shared code never have to touch Kotlin, Gradle or Android Studio. But its cons are a slow loop (publish, version, rebuild) and hard debugging of Kotlin from iOS.
+- The hybrid workflow fixes those cons: by default apps use the published remote versions. A developer actively changing a shared library switches to a local dependency, iterates and debugs with a fast loop, then publishes the new version and switches the app back to remote. In practice: Swift Package Manager for remote and direct framework integration for local, or CocoaPods with an environment variable to switch.

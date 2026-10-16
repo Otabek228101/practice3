@@ -18,3 +18,4 @@ rootProject.name = "KmpPractice"
 include(":shared")
 include(":androidApp")
 include(":structure")
+include(":hierarchy")

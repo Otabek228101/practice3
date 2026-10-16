@@ -1,0 +1,36 @@
+plugins {
+    kotlin("multiplatform")
+}
+
+kotlin {
+    jvm()
+    js(IR) {
+        browser()
+    }
+    linuxX64()
+
+    sourceSets {
+        val jvmAndJsMain by creating { }
+
+        val jvmMain by getting
+        val jsMain by getting
+
+        jvmAndJsMain.dependsOn(commonMain.get())
+        jvmMain.dependsOn(jvmAndJsMain)
+        jsMain.dependsOn(jvmAndJsMain)
+
+        jvmTest.dependencies {
+            implementation(kotlin("test"))
+        }
+    }
+}
+
+tasks.register("printSourceSets") {
+    group = "practice"
+    doLast {
+        kotlin.sourceSets.sortedBy { it.name }.forEach { sourceSet ->
+            val parents = sourceSet.dependsOn.joinToString { it.name }
+            println("${sourceSet.name}  ->  dependsOn: [$parents]")
+        }
+    }
+}
