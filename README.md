@@ -1,6 +1,7 @@
 # KMP Practice 
 
-Answers to questions are in [ANSWERS.md](ANSWERS.md).
+Answers to Practice 4 are in [ANSWERS.md](ANSWERS.md).
+Answers to Practice 4.1 (30 tasks) are in [ANSWERS_4.1.md](ANSWERS_4.1.md).
 
 ## Modules
 
@@ -25,3 +26,26 @@ Answers to questions are in [ANSWERS.md](ANSWERS.md).
 `gradle-snapshots` has the `structure/build.gradle.kts` file as it looked for question 8 (before) and question 12 (after adding `js`).
 
 For `hierarchy`: `question16-hierarchy-build.gradle.kts.txt` is the file for question 16, and `question17-21-hierarchy-build.gradle.kts.txt` is the final version (iOS targets + `printJvmCompilations`).
+
+## Practice 4.1
+
+| Module / folder | What it is |
+|---|---|
+| `practice41` | KMP module: android + jvm (desktop) + iosArm64 + iosSimulatorArm64, Ktor engines per platform |
+| `feature/auth`, `feature/profile` | feature modules (`:feature:auth`, `:feature:profile`) with shared `SessionStore` state |
+| `umbrella` | umbrella module: one static iOS framework `Shared` exporting both features + XCFramework |
+| `shared` | now also configured with `maven-publish` (`uz.ttpu.shared:shared:1.0.0`) |
+| `samples` | Android ViewModel and SwiftUI view model that use `LoginValidator` |
+| `swift-package` | `Package.swift` with the `.binaryTarget` for the XCFramework |
+
+| Task | Files |
+|---|---|
+| 4 | `practice41/src/*/kotlin/com/example/Platform*.kt` |
+| 5 | `practice41/src/*/kotlin/com/example/Time*.kt` |
+| 8 | `practice41/src/iosMain/kotlin/com/example/IosVersion.kt` |
+| 9 | `practice41/build.gradle.kts`, `practice41/src/commonMain/kotlin/com/example/ApiClient.kt` |
+| 12 | `practice41/src/commonMain/kotlin/com/example/EmailValidation.kt`<br>`practice41/src/commonTest/kotlin/com/example/EmailValidationTest.kt` |
+| 14 | `practice41/src/commonMain/kotlin/com/example/LoginValidator.kt`<br>`samples/android/LoginViewModel.kt`<br>`samples/ios/LoginViewModel.swift` |
+| 18, 19, 20, 21 | `feature/auth`, `feature/profile`, `umbrella/build.gradle.kts` |
+| 24 | `shared/build.gradle.kts` |
+| 25 | `umbrella/build.gradle.kts`, `swift-package/Package.swift` |
